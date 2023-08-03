@@ -1,16 +1,41 @@
 {
   "name": "employee-tracker",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "",
-  "main": "index.js",
+  "type": "module",
+  "engines": {
+    "node": ">= 18.12 <19"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node build/src/main.js",
+    "clean": "rimraf coverage build tmp",
+    "prebuild": "npm run lint",
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -w -p tsconfig.json",
+    "build:release": "npm run clean && tsc -p tsconfig.release.json",
+    "lint": "eslint . --ext .ts --ext .mts",
+    "prettier": "prettier --config .prettierrc --write .",
+    "dev": "ts-node-dev — respawn — pretty — transpile-only index.ts"
   },
   "keywords": [],
-  "author": "",
+  "author": "Brian Gorman",
   "license": "MIT",
   "dependencies": {
-    "inquirer": "^8.2.4",
-    "mysql2": "^3.5.2"
+    "inquirer": "^8.2.6",
+    "mysql2": "^3.5.2",
+    "tslib": "^2.6.1"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^8.2.6",
+    "@types/node": "^20.4.6",
+    "@typescript-eslint/eslint-plugin": "^6.2.1",
+    "@typescript-eslint/parser": "^6.2.1",
+    "eslint": "^8.46.0",
+    "eslint-config-prettier": "^8.10.0",
+    "prettier": "^3.0.1",
+    "rimraf": "^5.0.1",
+    "ts-node": "^10.9.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.1.6"
   }
 }
