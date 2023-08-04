@@ -1,3 +1,5 @@
-import start from './cli.js';
+import 'dotenv/config';
+import CLI from './cli.js';
 
-start();
+const cli = await CLI.newCLI();
+cli.start();

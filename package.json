@@ -21,6 +21,7 @@
   "author": "Brian Gorman",
   "license": "MIT",
   "dependencies": {
+    "dotenv": "^16.3.1",
     "inquirer": "^8.2.6",
     "mysql2": "^3.5.2",
     "tslib": "^2.6.1"
