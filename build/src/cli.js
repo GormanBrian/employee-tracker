@@ -1,5 +1,5 @@
 import inquirer from 'inquirer';
-import Connector from './db/connection.js';
+import { EmployeeTrackerDatabaseConnection } from './db/connection.js';
 const { prompt } = inquirer;
 var RootChoices;
 (function (RootChoices) {
@@ -21,8 +21,8 @@ class CLI {
     }
     static newCLI = async () => {
         try {
-            let db = await Connector.newConnection();
-            let roleNames = await db.getAllRoleNames();
+            let db = await EmployeeTrackerDatabaseConnection.newETConnection();
+            let roleNames = await db.selectAllRoleNames();
             let cli = new CLI(db, roleNames);
             return cli;
         }
@@ -38,7 +38,7 @@ class CLI {
             type: 'input',
         },
     ]).then(({ newDepartmentName }) => {
-        this.db.addDepartment(newDepartmentName);
+        this.db.insertDepartment(newDepartmentName);
     });
     promptAddRole = async () => prompt([
         {
@@ -69,7 +69,7 @@ class CLI {
         },
     ]);
     run = async () => {
-        this.roleNames = await this.db.getAllRoleNames();
+        this.roleNames = await this.db.selectAllRoleNames();
         await prompt([
             {
                 message: 'What would you like to do?',

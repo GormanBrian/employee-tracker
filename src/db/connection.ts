@@ -1,145 +1,172 @@
-import { Connection, createConnection, RowDataPacket } from 'mysql2/promise';
+import {
+  Connection,
+  ConnectionOptions,
+  createConnection,
+  RowDataPacket,
+} from 'mysql2/promise';
+import { InsertValues, TableDataProps, TableData } from './TableData.js';
 
-export enum Tables {
-  Department = 'department',
-  Role = 'role',
-  Employee = 'employee',
-}
+export type Newable<T> = { new (...args: any[]): T };
 
-enum ReduceLinesOptions {
+/**
+ * Options for separating SQL arguments or statements
+ *
+ * - {@linkcode ReduceStatementsOptions.Comma Comma} - `,`
+ * - {@linkcode ReduceStatementsOptions.NewLine NewLine} - `\n`
+ * - {@linkcode ReduceStatementsOptions.Semicolon Semicolon} - `;`
+ */
+enum ReduceStatementsOptions {
   Comma = ',',
   NewLine = '\n',
+  Semicolon = ';',
 }
 
-type SeedRound = Array<Array<string>>;
+/**
+ * SQL Configuration Options
+ *
+ * @param host Hostname
+ * @param user Username
+ * @param password SQL server password
+ * @param database Database name
+ */
+type SQLConfiguration = Pick<
+  ConnectionOptions,
+  'host' | 'user' | 'password' | 'database'
+>;
 
-interface TableDataProps {
-  name: Tables;
-  properties: Array<string>;
-  cols: Array<string>;
-  seeds: Array<SeedRound>;
-}
-
-class TableData {
-  static department = new TableData({
-    name: Tables.Department,
-    properties: ['name'],
-    cols: [
-      'id INT not null auto_increment primary key',
-      'name VARCHAR(255) not null',
-    ],
-    seeds: [[['"Sales"'], ['"Engineering"'], ['"Finance"'], ['"Legal"']]],
-  });
-
-  static role = new TableData({
-    name: Tables.Role,
-    properties: ['title', 'salary', 'department_id'],
-    cols: [
-      'id INT not null auto_increment primary key',
-      'title VARCHAR(255) not null',
-      'salary DECIMAL not null',
-      'department_id INT',
-      'FOREIGN KEY (department_id) REFERENCES department(id) ON DELETE SET NULL',
-    ],
-    seeds: [
-      [
-        ['"Sales Lead"', '100000', '1'],
-        ['"Salesperson"', '80000', '1'],
-        ['"Lead Engineer"', '150000', '2'],
-        ['"Software Engineer"', '120000', '2'],
-        ['"Account Manager"', '160000', '3'],
-        ['"Accountant"', '125000', '3'],
-        ['"Legal Team Lead"', '250000', '4'],
-        ['"Lawyer"', '190000', '4'],
-      ],
-    ],
-  });
-
-  static employee = new TableData({
-    name: Tables.Employee,
-    properties: ['first_name', 'last_name', 'role_id', 'manager_id'],
-    cols: [
-      'id INT not null auto_increment primary key',
-      'first_name VARCHAR(255)',
-      'last_name VARCHAR(255)',
-      'role_id INT',
-      'manager_id INT',
-      'FOREIGN KEY (role_id) REFERENCES role(id) ON DELETE SET NULL',
-      'FOREIGN KEY (manager_id) REFERENCES employee(id) ON DELETE SET NULL',
-    ],
-    seeds: [
-      [
-        ['"John"', '"Doe"', '1', 'null'],
-        ['"Ashley"', '"Rodriguez"', '3', 'null'],
-        ['"Kunal"', '"Singh"', '5', 'null'],
-        ['"Sarah"', '"Lourd"', '7', 'null'],
-      ],
-      [
-        ['"Mike"', '"Chan"', '2', '1'],
-        ['"Kevin"', '"Tupik"', '4', '2'],
-        ['"Malia"', '"Brown"', '6', '3'],
-        ['"Tom"', '"Allen"', '8', '4'],
-      ],
-    ],
-  });
-
-  static employeeTrackerTables = [
-    TableData.department,
-    TableData.role,
-    TableData.employee,
-  ];
-
-  name: Tables;
-  properties: Array<string>;
-  cols: Array<string>;
-  seeds: Array<SeedRound>;
-
-  constructor({ name, properties, cols, seeds }: TableDataProps) {
-    this.name = name;
-    this.properties = properties;
-    this.cols = cols;
-    this.seeds = seeds;
-  }
-}
-
-export default class Connector {
+export default class DatabaseConnection {
+  /* SQL host connection */
   public connection: Connection;
+  private config: Required<SQLConfiguration>;
+  public tables: Array<TableData>;
 
-  constructor(connection: Connection) {
+  /**
+   * Constructor for {@linkcode DatabaseConnection} class
+   *
+   * @constructor
+   * @param connection Connection to the SQL host
+   * @param config SQL host and database configuration variables
+   */
+  constructor(connection: Connection, config: Required<SQLConfiguration>) {
     this.connection = connection;
+    this.config = config;
+    this.tables = [];
+  }
+
+  /**
+   *
+   * @param name Name of the table
+   * @returns
+   */
+  tableNamed(name: string): TableData | undefined {
+    return this.tables.find((table) => table.name === name);
   }
 
   /* =============================== CONNECT =============================== */
 
-  static connect = async () =>
-    createConnection({
-      host: 'localhost',
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-    })
-      .then((connection: Connection) =>
-        connection
-          .query(`CREATE DATABASE IF NOT EXISTS ${process.env.DB_NAME};`)
-          .then(async () => {
-            console.info('Created database');
-            return connection.query(`USE ${process.env.DB_NAME};`).then(() => {
-              console.info('Using database');
-              return connection;
-            });
-          }),
-      )
-      .catch((err) => {
-        console.error(err);
-        throw err;
-      });
+  /**
+   * Connects to the SQL host
+   *
+   * @async
+   * @static
+   * @param config SQL host configuration variables
+   * @returns {Promise<Connection>} Promise that resolves with a SQL connection
+   * @throws Error if {@linkcode createConnection} or {@linkcode Connection.query query} fail
+   */
+  static connect = async ({
+    host,
+    user,
+    password,
+  }: SQLConfiguration): Promise<Connection> =>
+    createConnection({ host, user, password }).catch((err) => {
+      console.error(err);
+      throw err;
+    });
 
-  static newConnection = async () => {
+  /**
+   * Wrapper for {@linkcode initialize} method using instance connection
+   */
+  async initialize() {
+    return DatabaseConnection.initialize(this.connection, this.config.database);
+  }
+
+  /**
+   * Creates a database if it doesn't exist, sets the connection to use that database
+   *
+   * @param connection SQL host connection
+   * @param database Name of the database
+   */
+  private static initialize = async (
+    connection: Connection,
+    database: string,
+  ) => {
+    connection
+      .query(`CREATE DATABASE IF NOT EXISTS ${database};`)
+      .then(async () => {
+        console.info('Created database');
+        connection.query(`USE ${database};`).then(() => {
+          console.info('Using database');
+        });
+      });
+  };
+
+  /**
+   * {@linkcode SQLConfiguration} using {@linkcode process.env} variables
+   */
+  static EnvSQLConfiguration: SQLConfiguration = {
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+  };
+
+  /**
+   * Validates the properties of an {@linkcode SQLConfiguration} object are not falsy
+   *
+   * @static
+   * @param config SQL host and database configuration variables
+   * @returns SQL configuration with required values
+   * @throws {TypeError} Error when {@linkcode SQLConfiguration} contains falsy values
+   */
+  static validateConfig = ({
+    host,
+    user,
+    password,
+    database,
+  }: SQLConfiguration): Required<SQLConfiguration> => {
+    if (host && user && password && database)
+      return {
+        host,
+        user,
+        password,
+        database,
+      } as Required<SQLConfiguration>;
+    throw new TypeError(
+      'SQL configuration must contain the following properties:\nhost\nuser\npassword\ndatabase',
+    );
+  };
+
+  /**
+   * Constructs a {@linkcode Database} instance
+   *
+   * @async
+   * @static
+   * @param config SQL host and database configuration variables
+   * @returns Promise that resolves with a new Database
+   * @throws Error if {@linkcode connect} or {@linkcode setupTables} fail
+   */
+  static newConnection = async <T extends DatabaseConnection>(
+    create: (connection: Connection, config: Required<SQLConfiguration>) => T,
+    config: SQLConfiguration = DatabaseConnection.EnvSQLConfiguration,
+  ): Promise<T> => {
     try {
-      let connection = await Connector.connect();
-      let connector = new Connector(connection);
+      const validConfig = DatabaseConnection.validateConfig(config);
+      const connection = await DatabaseConnection.connect(validConfig);
+      const connector = create(connection, validConfig);
+      await connector.initialize();
       await connector.setupTables();
       console.info('Connection established');
-      return connector;
+      return connector as T;
     } catch (err) {
       console.error(err);
       throw err;
@@ -148,129 +175,247 @@ export default class Connector {
 
   /* ============================= SETUP TABLES ============================ */
 
-  async checktable(tableName: string) {
+  /**
+   * Checks if a table exists in the current database
+   *
+   * @async
+   * @param name Name of the table
+   * @returns Promise that resolves with the status of the table
+   * @throws Error if {@linkcode Connection.query query} fails
+   */
+  async checktable(name: string): Promise<boolean> {
     try {
-      let sql = `SHOW TABLES LIKE "${tableName}"`;
       return this.connection
-        .query<RowDataPacket[]>(sql)
+        .query<RowDataPacket[]>(`SHOW TABLES LIKE "${name}";`)
         .then((value) => value[0].length > 0);
     } catch (err) {
       throw err;
     }
   }
 
-  static reduceLinesOptions: Array<ReduceLinesOptions> = [
-    ReduceLinesOptions.Comma,
-    ReduceLinesOptions.NewLine,
+  /**
+   * Default options for reduceLines
+   *
+   * - {@linkcode ReduceStatementsOptions.Comma Comma}
+   * - {@linkcode ReduceStatementsOptions.NewLine New Line}
+   *
+   * @static
+   * @constant defaultReduceStatementsOptions
+   */
+  static defaultReduceStatementsOptions: Array<ReduceStatementsOptions> = [
+    ReduceStatementsOptions.Comma,
+    ReduceStatementsOptions.NewLine,
   ];
 
-  static reduceLines = (
-    lines: Array<string>,
-    options: Array<ReduceLinesOptions> = Connector.reduceLinesOptions,
-  ) => lines.join(options.join());
+  /**
+   * Reduces an array of SQL statements
+   *
+   * @param statements Statements to be reduced
+   * @param options Join options for reduction
+   * @returns SQL string with reduced statements
+   */
+  static reduceStatements = (
+    statements: Array<string>,
+    options: Array<ReduceStatementsOptions> = DatabaseConnection.defaultReduceStatementsOptions,
+  ): string => statements.join(options.join());
 
-  static reduceSeeds = (
-    lines: Array<Array<string>>,
-    options?: Array<ReduceLinesOptions>,
-  ) =>
-    Connector.reduceLines(
-      lines.map((l) => `(${l.join(', ')})`),
-      options,
+  /**
+   * Reduces a 2D array of {@linkcode InsertValues} into a usable SQL string
+   *
+   * @example
+   * ```js
+   * DatabaseConnection.reduceInsertValues([["Ada", "Lovelace"], ["Alan", "Turing"]]);
+   * ```
+   * // Returns
+   * ```schema
+   * ("Ada", "Lovelace"),
+   * ("Alan", "Turing")
+   * ```
+   *
+   * @param insertValues 2D array of values
+   * @returns SQL string of `INSERT` values
+   */
+  static reduceInsertValues = (values: InsertValues): string =>
+    DatabaseConnection.reduceStatements(
+      values.map((v) => `(${v.join(', ')})`),
+      [ReduceStatementsOptions.Comma],
     );
 
-  dropTable = async (tableName: string) =>
-    this.connection.query(`DROP TABLE IF EXISTS ${tableName}`);
+  /**
+   * Drops a table from the current database if it exists
+   *
+   * @param name Name of the table
+   * @returns Promise that resolves with successful table drop
+   * @throws Error if query rejects
+   */
+  async dropTable(name: string) {
+    return this.connection.query(`DROP TABLE IF EXISTS ${name};`);
+  }
 
-  createTable = async ({ name, cols }: TableDataProps) => {
+  /**
+   *
+   * @param tableDataProps
+   */
+  async createTable({ name, cols }: TableDataProps) {
     await this.dropTable(name);
     this.connection.query(
       `CREATE TABLE ${name} (
-  ${Connector.reduceLines(cols)}
+  ${DatabaseConnection.reduceStatements(cols)}
   );`,
     );
-  };
+  }
 
-  seedTable = async (table: TableData, seeds: Array<SeedRound>) => {
+  async seedTable(table: TableData, seeds: Array<InsertValues>) {
     seeds.forEach(async (round) => {
       await this.insertIntoTable(table, round);
     });
-  };
 
-  setupTable = async (
+    console.info(`Seeding ${table.name} table`);
+  }
+
+  async setupTable(
     table: TableData,
     drop: boolean = false,
     seed: boolean = true,
-  ) => {
+  ) {
     const result = await this.checktable(table.name);
     console.info(`Does ${table.name} table exist: ${result}`);
     if (drop || !result) {
       console.info(`Creating ${table.name} table`);
       await this.createTable(table);
     }
-    if (seed) {
-      console.info(`Seeding ${table.name} table`);
-      await this.seedTable(table, table.seeds);
-    }
-  };
+    if (seed) await this.seedTable(table, table.seeds);
+  }
 
-  setupTables = async (
+  async setupTables(
     tables: Array<TableData> = TableData.employeeTrackerTables,
     drop: boolean = false,
     seed: boolean = false,
-  ) => {
+  ) {
     tables.forEach(async (table) => {
       await this.setupTable(table, drop, seed);
     });
-  };
+  }
 
   /* ============================== SELECTORS ============================== */
 
-  getAll = async (
-    tableName: string,
-    values: Array<string>,
-    joins: Array<string> = [],
-  ) =>
-    this.connection
+  /**
+   * Selects and returns values from a table
+   *
+   * @param name Table name
+   * @param cols Columns to be selected
+   * @param joins Additional `JOIN` statements
+   * @returns Table results
+   */
+  async selectFromTable(
+    name: string,
+    cols: Array<string> | string = '*',
+    joins?: Array<string>,
+  ): Promise<RowDataPacket[]> {
+    return this.connection
       .query<RowDataPacket[]>(
-        `SELECT ${values.join(', ')} from ${tableName}${
-          joins.length === 0 ? '' : '\n' + joins.join('\n')
-        };`,
+        `SELECT ${
+          typeof cols === 'string' ? cols : cols.join(', ')
+        } from ${name}${joins ? '\n' + joins!.join('\n') : ''};`,
       )
-      .then((results) => results[0]);
+      .then((results) => {
+        console.log(results);
+        return results[0];
+      });
+  }
 
-  getAllReduced = async (
+  // static getArrayFromSelection = (property: string, results: RowDataPacket[]) =>
+  //   results.map((r) => (property in r ? r[property] : null));
+
+  /**
+   * Selects and returns
+   *
+   * @param name Table name
+   * @param property
+   * @param joins
+   * @returns
+   */
+  async selectArrayFromTableColumn(
+    name: string,
     property: string,
-    tableName: string,
-    values: Array<string>,
     joins: Array<string> = [],
-  ) =>
-    this.getAll(tableName, values, joins).then((results) =>
+  ) {
+    return this.selectFromTable(name, property, joins).then((results) =>
       results.map((r) => (property in r ? r[property] : null)),
     );
+  }
 
-  logAll = async (
-    tableName: string,
-    values: Array<string>,
-    other?: Array<string>,
-  ) =>
-    this.getAll(tableName, values, other).then((results) =>
+  /* ============================ LOG SELECTORS ============================ */
+
+  /**
+   * Logs columns from a table
+   *
+   * @param name Table name
+   * @param cols Columns to be logged
+   * @param other
+   * @returns
+   */
+  async logFromTable(name: string, cols: Array<string>, other?: Array<string>) {
+    return this.selectFromTable(name, cols, other).then((results) =>
       console.table(results),
     );
+  }
 
-  logAllDepartments = async () => this.logAll(Tables.Department, ['*']);
+  /* =============================== INSERTS =============================== */
+
+  /**
+   * Inserts rows of values into a `table`
+   *
+   * @param table Table to insert `values` into
+   * @param values Values to be inserted
+   * @returns Promise that resolves with successful insertion
+   */
+  async insertIntoTable(table: TableData, values: InsertValues) {
+    return this.connection
+      .query(
+        `INSERT INTO ${table.name} (${table.properties.join(', ')})
+VALUES ${DatabaseConnection.reduceInsertValues(values)};`,
+      )
+      .then((result) => {
+        console.info(typeof result);
+      });
+  }
+}
+
+/*
+
+
+  =============================== Employee Tracker ===============================
+
+
+*/
+
+export class EmployeeTrackerDatabaseConnection extends DatabaseConnection {
+  static newETConnection = async () =>
+    DatabaseConnection.newConnection((connection, config) => {
+      return new EmployeeTrackerDatabaseConnection(connection, config);
+    });
+
+  /* ============================== SELECTORS ============================== */
+
+  /**
+   *
+   * @returns
+   */
+  selectAllRoleNames = async (): Promise<Array<string>> =>
+    this.selectArrayFromTableColumn('title', Tables.Role, ['role.title']);
+
+  logAllDepartments = async () => this.logFromTable(Tables.Department, ['*']);
 
   logAllRoles = async () =>
-    this.logAll(
+    this.logFromTable(
       Tables.Role,
       ['role.id', 'role.title', 'role.salary', 'department.name'],
       ['JOIN department on role.department_id = department.id'],
     );
 
-  getAllRoleNames = async (): Promise<Array<string>> =>
-    this.getAllReduced('title', Tables.Role, ['role.title']);
-
   logAllEmployees = async () =>
-    this.logAll(
+    this.logFromTable(
       Tables.Employee,
       [
         'employee.id',
@@ -290,19 +435,13 @@ export default class Connector {
 
   /* =============================== INSERTS =============================== */
 
-  insertIntoTable = async (table: TableData, seedRound: SeedRound) =>
-    this.connection.query(`INSERT INTO ${table.name} (${table.properties.join(
-      ', ',
-    )})
-VALUES ${Connector.reduceSeeds(seedRound)};`);
-
-  addDepartment = async (name: string) =>
+  insertDepartment = async (name: string) =>
     this.insertIntoTable(TableData.department, [[name]]);
 
-  addRole = async (title: string, salary: string, departmentId: string) =>
+  insertRole = async (title: string, salary: string, departmentId: string) =>
     this.insertIntoTable(TableData.role, [[title, salary, departmentId]]);
 
-  addEmployee = async (
+  insertEmployee = async (
     firstName: string,
     lastName: string,
     roleId: string,
